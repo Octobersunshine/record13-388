@@ -40,6 +40,9 @@ def build_parser() -> argparse.ArgumentParser:
   
   # 只处理特定类型的文件
   python cli.py --dir ./files --prefix "doc_" --pattern "*.txt"
+  
+  # 自动处理重名冲突（添加序号）
+  python cli.py --dir ./files --prefix "new_" --auto-rename
         """
     )
 
@@ -116,6 +119,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="如果目标文件存在则覆盖"
+    )
+
+    parser.add_argument(
+        "--auto-rename",
+        action="store_true",
+        default=False,
+        help="如果目标文件存在则自动添加序号（如 file (1).jpg）"
     )
 
     parser.add_argument(
@@ -203,7 +213,7 @@ def main() -> int:
     except SystemExit:
         return 1
 
-    previews = renamer.preview(rules, args.pattern)
+    previews = renamer.preview(rules, args.pattern, auto_rename=args.auto_rename)
 
     if not previews:
         print("没有找到匹配的文件")
@@ -230,7 +240,8 @@ def main() -> int:
                     file_pattern=preview.old_path.name,
                     dry_run=False,
                     overwrite=args.overwrite,
-                    stop_on_error=not args.continue_on_error
+                    stop_on_error=not args.continue_on_error,
+                    auto_rename=args.auto_rename
                 )
                 results.extend(result)
         renamer.print_results(results)
@@ -240,7 +251,8 @@ def main() -> int:
             file_pattern=args.pattern,
             dry_run=False,
             overwrite=args.overwrite,
-            stop_on_error=not args.continue_on_error
+            stop_on_error=not args.continue_on_error,
+            auto_rename=args.auto_rename
         )
         renamer.print_results(results)
 

@@ -31,6 +31,7 @@ class RenameResult:
     new_path: Path
     success: bool
     error: Optional[str] = None
+    auto_renamed: bool = False
 
 
 @dataclass
@@ -108,16 +109,38 @@ class BatchRenamer:
                 name_part = self._apply_rule_to_text(name_part, rule)
             return name_part + ext_part
 
-    def preview(self, rules: List[RenameRule], file_pattern: str = "*") -> List[RenamePreview]:
+    @staticmethod
+    def _generate_unique_name(target_path: Path, used_names: set) -> Path:
+        if target_path not in used_names and not target_path.exists():
+            return target_path
+
+        stem = target_path.stem
+        suffix = target_path.suffix
+        parent = target_path.parent
+        counter = 1
+
+        while True:
+            candidate = parent / f"{stem} ({counter}){suffix}"
+            if candidate not in used_names and not candidate.exists():
+                return candidate
+            counter += 1
+
+    def preview(self, rules: List[RenameRule], file_pattern: str = "*", auto_rename: bool = False) -> List[RenamePreview]:
         files = self._get_files(file_pattern)
         previews = []
+        used_names = set()
 
         for file_path in files:
             new_filename = self._generate_new_name(file_path, rules)
             new_path = file_path.with_name(new_filename)
+
+            if auto_rename and new_path != file_path:
+                new_path = self._generate_unique_name(new_path, used_names)
+
+            used_names.add(new_path)
             previews.append(RenamePreview(
                 old_name=file_path.name,
-                new_name=new_filename,
+                new_name=new_path.name,
                 old_path=file_path,
                 new_path=new_path
             ))
@@ -130,62 +153,81 @@ class BatchRenamer:
         file_pattern: str = "*",
         dry_run: bool = False,
         overwrite: bool = False,
-        stop_on_error: bool = True
+        stop_on_error: bool = True,
+        auto_rename: bool = False
     ) -> List[RenameResult]:
-        previews = self.preview(rules, file_pattern)
+        files = self._get_files(file_pattern)
         results = []
+        used_names = set()
 
-        for preview in previews:
-            old_path = preview.old_path
-            new_path = preview.new_path
+        for file_path in files:
+            new_filename = self._generate_new_name(file_path, rules)
+            new_path = file_path.with_name(new_filename)
+            auto_renamed_flag = False
 
-            if old_path == new_path:
+            if file_path == new_path:
                 results.append(RenameResult(
-                    old_path=old_path,
+                    old_path=file_path,
                     new_path=new_path,
                     success=True,
-                    error="文件名未变化"
+                    error="文件名未变化",
+                    auto_renamed=False
                 ))
                 continue
 
-            if new_path.exists() and not overwrite:
-                error_msg = f"目标文件已存在: {new_path.name}"
-                logger.warning(error_msg)
-                results.append(RenameResult(
-                    old_path=old_path,
-                    new_path=new_path,
-                    success=False,
-                    error=error_msg
-                ))
-                if stop_on_error:
-                    break
-                continue
+            if new_path.exists() or new_path in used_names:
+                if overwrite:
+                    pass
+                elif auto_rename:
+                    new_path = self._generate_unique_name(new_path, used_names)
+                    auto_renamed_flag = True
+                else:
+                    error_msg = f"目标文件已存在: {new_path.name}"
+                    logger.warning(error_msg)
+                    results.append(RenameResult(
+                        old_path=file_path,
+                        new_path=new_path,
+                        success=False,
+                        error=error_msg,
+                        auto_renamed=False
+                    ))
+                    if stop_on_error:
+                        break
+                    continue
+
+            used_names.add(new_path)
 
             if dry_run:
                 results.append(RenameResult(
-                    old_path=old_path,
+                    old_path=file_path,
                     new_path=new_path,
                     success=True,
-                    error="预览模式，未执行"
+                    error="预览模式，未执行" if not auto_renamed_flag else "预览模式，自动添加序号",
+                    auto_renamed=auto_renamed_flag
                 ))
                 continue
 
             try:
-                os.rename(old_path, new_path)
-                logger.info(f"重命名成功: {old_path.name} -> {new_path.name}")
+                os.rename(file_path, new_path)
+                if auto_renamed_flag:
+                    logger.info(f"重命名成功（自动添加序号）: {file_path.name} -> {new_path.name}")
+                else:
+                    logger.info(f"重命名成功: {file_path.name} -> {new_path.name}")
                 results.append(RenameResult(
-                    old_path=old_path,
+                    old_path=file_path,
                     new_path=new_path,
-                    success=True
+                    success=True,
+                    auto_renamed=auto_renamed_flag
                 ))
             except OSError as e:
                 error_msg = f"重命名失败: {str(e)}"
                 logger.error(error_msg)
                 results.append(RenameResult(
-                    old_path=old_path,
+                    old_path=file_path,
                     new_path=new_path,
                     success=False,
-                    error=error_msg
+                    error=error_msg,
+                    auto_renamed=auto_renamed_flag
                 ))
                 if stop_on_error:
                     break
@@ -216,14 +258,19 @@ class BatchRenamer:
     def print_results(results: List[RenameResult]) -> None:
         success_count = sum(1 for r in results if r.success)
         fail_count = len(results) - success_count
+        auto_count = sum(1 for r in results if r.auto_renamed)
 
-        print(f"\n执行完成: 成功 {success_count} 个，失败 {fail_count} 个")
+        summary = f"\n执行完成: 成功 {success_count} 个，失败 {fail_count} 个"
+        if auto_count > 0:
+            summary += f"，其中自动重命名 {auto_count} 个"
+        print(summary)
         print("-" * 80)
 
         for result in results:
             status = "✓" if result.success else "✗"
+            auto_tag = " [自动重命名]" if result.auto_renamed else ""
             error_info = f" ({result.error})" if result.error else ""
-            print(f"{status} {result.old_path.name} -> {result.new_path.name}{error_info}")
+            print(f"{status} {result.old_path.name} -> {result.new_path.name}{auto_tag}{error_info}")
 
         print("-" * 80)
 

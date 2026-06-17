@@ -290,6 +290,139 @@ def test_recursive():
     shutil.rmtree(test_dir)
 
 
+def test_auto_rename_existing_file():
+    print("\n" + "=" * 60)
+    print("测试 11: 自动序号 - 目标文件已存在")
+    print("=" * 60)
+
+    test_dir = setup_test_directory(Path(__file__).parent)
+    (test_dir / "photo.jpg").touch()
+
+    renamer = BatchRenamer(str(test_dir))
+
+    rules = [create_replace_rule("photo1", "photo")]
+    results = renamer.rename(rules, file_pattern="photo1.jpg", auto_rename=True)
+
+    assert all(r.success for r in results), "自动重命名失败"
+    assert results[0].auto_renamed, "应该标记为自动重命名"
+    assert results[0].new_path.name == "photo (1).jpg", f"文件名不正确: {results[0].new_path.name}"
+    assert (test_dir / "photo.jpg").exists(), "原目标文件应该仍然存在"
+    assert (test_dir / "photo (1).jpg").exists(), "自动重命名的文件应该存在"
+
+    print("✓ 自动序号 - 目标文件已存在测试通过")
+    shutil.rmtree(test_dir)
+
+
+def test_auto_rename_multiple_conflicts():
+    print("\n" + "=" * 60)
+    print("测试 12: 自动序号 - 多个文件冲突")
+    print("=" * 60)
+
+    test_dir = setup_test_directory(Path(__file__).parent)
+
+    renamer = BatchRenamer(str(test_dir))
+
+    rules = [create_replace_rule(r"\d+", "", use_regex=True)]
+    results = renamer.rename(rules, file_pattern="photo*.jpg", auto_rename=True)
+
+    assert all(r.success for r in results), "所有文件都应该重命名成功"
+    assert sum(1 for r in results if r.auto_renamed) >= 1, "应该有自动重命名的文件"
+
+    jpg_files = sorted([f.name for f in test_dir.glob("photo*.jpg")])
+    assert "photo.jpg" in jpg_files, "应该有 photo.jpg"
+    assert "photo (1).jpg" in jpg_files, "应该有 photo (1).jpg"
+
+    print("✓ 自动序号 - 多个文件冲突测试通过")
+    shutil.rmtree(test_dir)
+
+
+def test_auto_rename_preview():
+    print("\n" + "=" * 60)
+    print("测试 13: 自动序号 - 预览模式")
+    print("=" * 60)
+
+    test_dir = setup_test_directory(Path(__file__).parent)
+    (test_dir / "photo.jpg").touch()
+
+    renamer = BatchRenamer(str(test_dir))
+
+    rules = [create_replace_rule("photo1", "photo")]
+    previews = renamer.preview(rules, file_pattern="photo1.jpg", auto_rename=True)
+
+    assert len(previews) == 1
+    assert previews[0].new_name == "photo (1).jpg", f"预览名不正确: {previews[0].new_name}"
+
+    results = renamer.rename(rules, file_pattern="photo1.jpg", dry_run=True, auto_rename=True)
+    assert all(r.success for r in results)
+    assert results[0].auto_renamed
+    assert (test_dir / "photo.jpg").exists(), "dry run 不应修改文件"
+    assert not (test_dir / "photo (1).jpg").exists(), "dry run 不应创建新文件"
+
+    print("✓ 自动序号 - 预览模式测试通过")
+    shutil.rmtree(test_dir)
+
+
+def test_auto_rename_three_way_conflict():
+    print("\n" + "=" * 60)
+    print("测试 14: 自动序号 - 三重冲突")
+    print("=" * 60)
+
+    test_dir = Path(__file__).parent / "test_run"
+    if test_dir.exists():
+        shutil.rmtree(test_dir)
+    test_dir.mkdir()
+
+    (test_dir / "image.jpg").touch()
+    (test_dir / "pic1.jpg").touch()
+    (test_dir / "pic2.jpg").touch()
+    (test_dir / "pic3.jpg").touch()
+
+    renamer = BatchRenamer(str(test_dir))
+
+    rules = [create_replace_rule(r"pic\d*", "image", use_regex=True)]
+    results = renamer.rename(rules, file_pattern="pic*.jpg", auto_rename=True)
+
+    assert all(r.success for r in results), "所有文件都应该重命名成功"
+    auto_count = sum(1 for r in results if r.auto_renamed)
+    assert auto_count == 3, f"应该有 3 个自动重命名，实际有 {auto_count} 个"
+
+    all_files = sorted([f.name for f in test_dir.glob("image*.jpg")])
+    expected = ["image.jpg", "image (1).jpg", "image (2).jpg", "image (3).jpg"]
+    for exp in expected:
+        assert exp in all_files, f"缺少文件: {exp}"
+
+    print("✓ 自动序号 - 三重冲突测试通过")
+    shutil.rmtree(test_dir)
+
+
+def test_auto_rename_with_extension():
+    print("\n" + "=" * 60)
+    print("测试 15: 自动序号 - 序号位置在扩展名前")
+    print("=" * 60)
+
+    test_dir = Path(__file__).parent / "test_run"
+    if test_dir.exists():
+        shutil.rmtree(test_dir)
+    test_dir.mkdir()
+
+    (test_dir / "note.txt").touch()
+    (test_dir / "file1.txt").touch()
+
+    renamer = BatchRenamer(str(test_dir))
+
+    rules = [create_replace_rule("file1", "note")]
+    results = renamer.rename(rules, file_pattern="file1.txt", auto_rename=True)
+
+    assert len(results) == 1, f"应该有 1 个结果，实际有 {len(results)} 个"
+    assert all(r.success for r in results)
+    assert results[0].new_path.name == "note (1).txt", f"序号位置不正确: {results[0].new_path.name}"
+    assert (test_dir / "note.txt").exists(), "原 note.txt 应该存在"
+    assert (test_dir / "note (1).txt").exists(), "note (1).txt 应该存在"
+
+    print("✓ 自动序号 - 序号位置测试通过")
+    shutil.rmtree(test_dir)
+
+
 def main():
     print("\n" + "#" * 60)
     print("#  文件批量重命名服务 - 单元测试")
@@ -306,6 +439,11 @@ def main():
         test_case_insensitive_replace,
         test_file_pattern_filter,
         test_recursive,
+        test_auto_rename_existing_file,
+        test_auto_rename_multiple_conflicts,
+        test_auto_rename_preview,
+        test_auto_rename_three_way_conflict,
+        test_auto_rename_with_extension,
     ]
 
     passed = 0
