@@ -423,6 +423,161 @@ def test_auto_rename_with_extension():
     shutil.rmtree(test_dir)
 
 
+def test_preview_metadata():
+    print("\n" + "=" * 60)
+    print("测试 16: 预览功能 - 元数据")
+    print("=" * 60)
+
+    test_dir = setup_test_directory(Path(__file__).parent)
+
+    renamer = BatchRenamer(str(test_dir))
+    rules = [create_prefix_rule("test_")]
+    previews = renamer.preview(rules, include_metadata=True)
+
+    assert len(previews) > 0
+    for p in previews:
+        assert p.is_changed == (not p.old_name.startswith("test_"))
+        assert p.file_size is not None
+        assert p.modified_time is not None
+        assert p.has_conflict == False
+        assert p.will_auto_rename == False
+
+    print("✓ 预览功能 - 元数据测试通过")
+    shutil.rmtree(test_dir)
+
+
+def test_preview_conflict_detection():
+    print("\n" + "=" * 60)
+    print("测试 17: 预览功能 - 冲突检测")
+    print("=" * 60)
+
+    test_dir = setup_test_directory(Path(__file__).parent)
+    (test_dir / "photo.jpg").touch()
+
+    renamer = BatchRenamer(str(test_dir))
+    rules = [create_replace_rule("photo1", "photo")]
+
+    previews = renamer.preview(rules, file_pattern="photo1.jpg", auto_rename=False)
+    assert previews[0].has_conflict == True
+    assert previews[0].will_auto_rename == False
+
+    previews_auto = renamer.preview(rules, file_pattern="photo1.jpg", auto_rename=True)
+    assert previews_auto[0].has_conflict == True
+    assert previews_auto[0].will_auto_rename == True
+    assert previews_auto[0].new_name == "photo (1).jpg"
+
+    print("✓ 预览功能 - 冲突检测测试通过")
+    shutil.rmtree(test_dir)
+
+
+def test_preview_export_formats():
+    print("\n" + "=" * 60)
+    print("测试 18: 预览功能 - 导出格式")
+    print("=" * 60)
+
+    test_dir = setup_test_directory(Path(__file__).parent)
+
+    renamer = BatchRenamer(str(test_dir))
+    rules = [create_prefix_rule("2025_")]
+    previews = renamer.preview(rules, include_metadata=False)
+
+    dict_list = renamer.preview_to_dict(previews)
+    assert isinstance(dict_list, list)
+    assert len(dict_list) == len(previews)
+    assert "old_name" in dict_list[0]
+    assert "new_name" in dict_list[0]
+
+    json_str = renamer.preview_to_json(previews)
+    assert isinstance(json_str, str)
+    assert "2025_" in json_str
+
+    tuples = renamer.preview_to_tuples(previews)
+    assert isinstance(tuples, list)
+    assert len(tuples) == len(previews)
+    assert isinstance(tuples[0], tuple)
+    assert len(tuples[0]) == 2
+
+    text = renamer.preview_to_text(previews)
+    assert isinstance(text, str)
+    assert "找到" in text
+    assert "原文件名" in text
+
+    mapping = renamer.get_mapping(previews)
+    assert isinstance(mapping, dict)
+    assert len(mapping) == len(previews)
+
+    print("✓ 预览功能 - 导出格式测试通过")
+    shutil.rmtree(test_dir)
+
+
+def test_preview_filter_methods():
+    print("\n" + "=" * 60)
+    print("测试 19: 预览功能 - 过滤方法")
+    print("=" * 60)
+
+    test_dir = setup_test_directory(Path(__file__).parent)
+    (test_dir / "photo.jpg").touch()
+
+    renamer = BatchRenamer(str(test_dir))
+
+    rules = [create_replace_rule("photo1", "photo")]
+    previews = renamer.preview(rules, file_pattern="photo*.jpg", auto_rename=True)
+
+    changed = renamer.get_changed_previews(previews)
+    assert len(changed) <= len(previews)
+
+    conflicts = renamer.get_conflict_previews(previews)
+    assert len(conflicts) >= 1
+    assert all(c.has_conflict for c in conflicts)
+
+    print("✓ 预览功能 - 过滤方法测试通过")
+    shutil.rmtree(test_dir)
+
+
+def test_preview_to_tuple_and_dict():
+    print("\n" + "=" * 60)
+    print("测试 20: 预览功能 - RenamePreview 对象方法")
+    print("=" * 60)
+
+    test_dir = setup_test_directory(Path(__file__).parent)
+
+    renamer = BatchRenamer(str(test_dir))
+    rules = [create_prefix_rule("test_")]
+    previews = renamer.preview(rules, file_pattern="photo1.jpg")
+
+    p = previews[0]
+    t = p.to_tuple()
+    assert t == (p.old_name, p.new_name)
+
+    d = p.to_dict()
+    assert isinstance(d, dict)
+    assert d["old_name"] == p.old_name
+    assert d["new_name"] == p.new_name
+    assert d["is_changed"] == p.is_changed
+
+    print("✓ 预览功能 - RenamePreview 对象方法测试通过")
+    shutil.rmtree(test_dir)
+
+
+def test_preview_no_metadata():
+    print("\n" + "=" * 60)
+    print("测试 21: 预览功能 - 不包含元数据")
+    print("=" * 60)
+
+    test_dir = setup_test_directory(Path(__file__).parent)
+
+    renamer = BatchRenamer(str(test_dir))
+    rules = [create_prefix_rule("test_")]
+    previews = renamer.preview(rules, include_metadata=False)
+
+    for p in previews:
+        assert p.file_size is None
+        assert p.modified_time is None
+
+    print("✓ 预览功能 - 不包含元数据测试通过")
+    shutil.rmtree(test_dir)
+
+
 def main():
     print("\n" + "#" * 60)
     print("#  文件批量重命名服务 - 单元测试")
@@ -444,6 +599,12 @@ def main():
         test_auto_rename_preview,
         test_auto_rename_three_way_conflict,
         test_auto_rename_with_extension,
+        test_preview_metadata,
+        test_preview_conflict_detection,
+        test_preview_export_formats,
+        test_preview_filter_methods,
+        test_preview_to_tuple_and_dict,
+        test_preview_no_metadata,
     ]
 
     passed = 0

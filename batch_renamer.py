@@ -40,6 +40,27 @@ class RenamePreview:
     new_name: str
     old_path: Path
     new_path: Path
+    is_changed: bool = False
+    has_conflict: bool = False
+    will_auto_rename: bool = False
+    file_size: Optional[int] = None
+    modified_time: Optional[float] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "old_name": self.old_name,
+            "new_name": self.new_name,
+            "old_path": str(self.old_path),
+            "new_path": str(self.new_path),
+            "is_changed": self.is_changed,
+            "has_conflict": self.has_conflict,
+            "will_auto_rename": self.will_auto_rename,
+            "file_size": self.file_size,
+            "modified_time": self.modified_time
+        }
+
+    def to_tuple(self) -> Tuple[str, str]:
+        return (self.old_name, self.new_name)
 
 
 class BatchRenamer:
@@ -125,7 +146,7 @@ class BatchRenamer:
                 return candidate
             counter += 1
 
-    def preview(self, rules: List[RenameRule], file_pattern: str = "*", auto_rename: bool = False) -> List[RenamePreview]:
+    def preview(self, rules: List[RenameRule], file_pattern: str = "*", auto_rename: bool = False, include_metadata: bool = True) -> List[RenamePreview]:
         files = self._get_files(file_pattern)
         previews = []
         used_names = set()
@@ -134,15 +155,39 @@ class BatchRenamer:
             new_filename = self._generate_new_name(file_path, rules)
             new_path = file_path.with_name(new_filename)
 
-            if auto_rename and new_path != file_path:
-                new_path = self._generate_unique_name(new_path, used_names)
+            is_changed = new_path != file_path
+            has_conflict = False
+            will_auto_rename = False
+
+            if is_changed:
+                original_new_path = new_path
+                if new_path.exists() or new_path in used_names:
+                    has_conflict = True
+                    if auto_rename:
+                        new_path = self._generate_unique_name(original_new_path, used_names)
+                        will_auto_rename = True
+
+            file_size = None
+            modified_time = None
+            if include_metadata:
+                try:
+                    stat = file_path.stat()
+                    file_size = stat.st_size
+                    modified_time = stat.st_mtime
+                except OSError:
+                    pass
 
             used_names.add(new_path)
             previews.append(RenamePreview(
                 old_name=file_path.name,
                 new_name=new_path.name,
                 old_path=file_path,
-                new_path=new_path
+                new_path=new_path,
+                is_changed=is_changed,
+                has_conflict=has_conflict,
+                will_auto_rename=will_auto_rename,
+                file_size=file_size,
+                modified_time=modified_time
             ))
 
         return previews
@@ -273,6 +318,82 @@ class BatchRenamer:
             print(f"{status} {result.old_path.name} -> {result.new_path.name}{auto_tag}{error_info}")
 
         print("-" * 80)
+
+    @staticmethod
+    def preview_to_dict(previews: List[RenamePreview]) -> List[dict]:
+        return [p.to_dict() for p in previews]
+
+    @staticmethod
+    def preview_to_json(previews: List[RenamePreview], indent: int = 2) -> str:
+        import json
+        data = BatchRenamer.preview_to_dict(previews)
+        return json.dumps(data, ensure_ascii=False, indent=indent)
+
+    @staticmethod
+    def preview_to_tuples(previews: List[RenamePreview]) -> List[Tuple[str, str]]:
+        return [p.to_tuple() for p in previews]
+
+    @staticmethod
+    def preview_to_text(previews: List[RenamePreview], show_details: bool = False) -> str:
+        if not previews:
+            return "没有找到匹配的文件"
+
+        lines = []
+        lines.append(f"找到 {len(previews)} 个文件，预览重命名效果:")
+        lines.append("-" * 80)
+
+        if show_details:
+            header = f"{'状态':<8} {'原文件名':<30} {'新文件名':<30} {'大小':<10}"
+            lines.append(header)
+        else:
+            lines.append(f"{'原文件名':<40} {'新文件名':<40}")
+        lines.append("-" * 80)
+
+        for preview in previews:
+            old_name = preview.old_name
+            new_name = preview.new_name if preview.is_changed else "(无变化)"
+
+            status_tags = []
+            if preview.has_conflict and not preview.will_auto_rename:
+                status_tags.append("冲突")
+            if preview.will_auto_rename:
+                status_tags.append("自动重命名")
+            status = ",".join(status_tags) if status_tags else ""
+
+            if show_details:
+                size = f"{preview.file_size} B" if preview.file_size is not None else "N/A"
+                lines.append(f"{status:<8} {old_name:<30} {new_name:<30} {size:<10}")
+            else:
+                lines.append(f"{old_name:<40} {new_name:<40}")
+
+        lines.append("-" * 80)
+
+        changed = sum(1 for p in previews if p.is_changed)
+        conflicts = sum(1 for p in previews if p.has_conflict)
+        auto = sum(1 for p in previews if p.will_auto_rename)
+
+        summary = f"总计: {len(previews)} 个文件"
+        if changed > 0:
+            summary += f", 将重命名 {changed} 个"
+        if conflicts > 0:
+            summary += f", 冲突 {conflicts} 个"
+        if auto > 0:
+            summary += f", 自动重命名 {auto} 个"
+        lines.append(summary)
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def get_changed_previews(previews: List[RenamePreview]) -> List[RenamePreview]:
+        return [p for p in previews if p.is_changed]
+
+    @staticmethod
+    def get_conflict_previews(previews: List[RenamePreview]) -> List[RenamePreview]:
+        return [p for p in previews if p.has_conflict]
+
+    @staticmethod
+    def get_mapping(previews: List[RenamePreview]) -> dict:
+        return {str(p.old_path): str(p.new_path) for p in previews}
 
 
 def create_prefix_rule(prefix: str, include_extension: bool = False) -> RenameRule:

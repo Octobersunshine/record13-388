@@ -149,6 +149,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="交互模式，逐个确认每个文件"
     )
 
+    parser.add_argument(
+        "--preview-format",
+        choices=["table", "json", "dict", "tuple", "text", "details"],
+        default="table",
+        help="预览输出格式: table(表格), json, dict, tuple(元组列表), text(纯文本), details(详细)"
+    )
+
+    parser.add_argument(
+        "--preview-only",
+        action="store_true",
+        default=False,
+        help="仅预览不执行，即使不指定 --dry-run"
+    )
+
+    parser.add_argument(
+        "--show-changed-only",
+        action="store_true",
+        default=False,
+        help="仅显示有变化的文件"
+    )
+
+    parser.add_argument(
+        "--export-preview",
+        help="将预览结果导出到文件（根据扩展名自动选择格式: .json/.txt）"
+    )
+
     return parser
 
 
@@ -219,9 +245,43 @@ def main() -> int:
         print("没有找到匹配的文件")
         return 0
 
-    renamer.print_preview(previews)
+    if args.show_changed_only:
+        previews = renamer.get_changed_previews(previews)
+        if not previews:
+            print("没有需要重命名的文件")
+            return 0
 
-    if args.dry_run:
+    display_previews = previews
+
+    if args.preview_format == "table":
+        renamer.print_preview(display_previews)
+    elif args.preview_format == "json":
+        print(renamer.preview_to_json(display_previews))
+    elif args.preview_format == "dict":
+        import pprint
+        pprint.pprint(renamer.preview_to_dict(display_previews))
+    elif args.preview_format == "tuple":
+        print(renamer.preview_to_tuples(display_previews))
+    elif args.preview_format == "text":
+        print(renamer.preview_to_text(display_previews, show_details=False))
+    elif args.preview_format == "details":
+        print(renamer.preview_to_text(display_previews, show_details=True))
+
+    if args.export_preview:
+        export_path = Path(args.export_preview)
+        if export_path.suffix.lower() == ".json":
+            export_path.write_text(
+                renamer.preview_to_json(display_previews),
+                encoding="utf-8"
+            )
+        else:
+            export_path.write_text(
+                renamer.preview_to_text(display_previews, show_details=True),
+                encoding="utf-8"
+            )
+        print(f"\n预览结果已导出到: {export_path}")
+
+    if args.dry_run or args.preview_only:
         print("\n预览模式，未执行任何操作")
         return 0
 
